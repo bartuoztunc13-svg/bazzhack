@@ -46,6 +46,12 @@ fi
 echo "Running lb config with options: ${LB_OPTIONS[*]}"
 lb config "${LB_OPTIONS[@]}"
 
+# Ensure hooks are executable so live-build can run them
+if [ -d "${SCRIPT_DIR}/hooks" ]; then
+  echo "Making local hooks executable"
+  find "${SCRIPT_DIR}/hooks" -type f -name "*.sh" -exec chmod +x {} + || true
+fi
+
 # Copy package lists and hooks into the live-build config layout
 echo "Installing package-lists and hooks into config/"
 mkdir -p config/package-lists
