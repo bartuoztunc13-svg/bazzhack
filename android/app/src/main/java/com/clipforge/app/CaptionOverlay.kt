@@ -9,8 +9,6 @@ import android.graphics.Typeface
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.BitmapOverlay
-import androidx.media3.effect.OverlaySettings
-import androidx.media3.effect.StaticOverlaySettings
 import kotlin.math.max
 import kotlin.math.min
 
@@ -33,25 +31,18 @@ class CaptionOverlay(
 ) : BitmapOverlay() {
 
     private val vertical = frameH > frameW
-    private val stripH = (frameH * if (vertical) 0.16 else 0.22).toInt()
-    private val empty: Bitmap = Bitmap.createBitmap(frameW, stripH, Bitmap.Config.ARGB_8888)
+    // Full-frame transparent layer: default overlay placement then lines up 1:1 with the video.
+    private val centerY = frameH * if (vertical) 0.72f else 0.88f
+    private val empty: Bitmap = Bitmap.createBitmap(frameW, frameH, Bitmap.Config.ARGB_8888)
     private var baseUs = -1L
     private var lastKey = -1L
     private var lastBitmap: Bitmap = empty
-
-    // Caption centre sits 28% (vertical) / 12% (landscape) up from the bottom.
-    private val settings: OverlaySettings = StaticOverlaySettings.Builder()
-        .setOverlayFrameAnchor(0f, 0f)
-        .setBackgroundFrameAnchor(0f, if (vertical) -0.44f else -0.76f)
-        .build()
 
     // Show a line until the next one starts when the gap is short, so captions don't flicker.
     private val shown: List<Pair<Double, Double>> = lines.mapIndexed { i, l ->
         val next = lines.getOrNull(i + 1)?.start
         l.start to if (next != null && next - l.end < 0.4) next else l.end
     }
-
-    override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings = settings
 
     override fun getBitmap(presentationTimeUs: Long): Bitmap {
         // Frames may be timed from 0 or from the clip start depending on the device; use the first one as 0.
@@ -94,10 +85,10 @@ class CaptionOverlay(
             total = maxW
         }
         val space2 = paint.measureText(" ")
-        val bmp = Bitmap.createBitmap(frameW, stripH, Bitmap.Config.ARGB_8888)
+        val bmp = Bitmap.createBitmap(frameW, frameH, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
         val fm = paint.fontMetrics
-        val baseline = stripH / 2f - (fm.ascent + fm.descent) / 2f
+        val baseline = centerY - (fm.ascent + fm.descent) / 2f
         var x = (frameW - total) / 2f
 
         if (style == CaptionStyle.BOXED) {
