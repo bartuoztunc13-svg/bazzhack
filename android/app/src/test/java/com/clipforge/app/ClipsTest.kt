@@ -86,4 +86,25 @@ class ClipsTest {
         assertEquals("1.5K views", fmtViews(hits[0].views))
         assertEquals("https://www.youtube.com/watch?v=dQw4w9WgXcQ", hits[0].url)
     }
+
+    @Test
+    fun hypeScoreRanksReplayPeaks() {
+        val heat = (0 until 10).map { Heat(it * 10.0, it * 10.0 + 10, if (it == 5) 1.0 else 0.2) }
+        assertEquals(100, hypeScore(heat, 50.0, 60.0))
+        assertEquals(20, hypeScore(heat, 0.0, 10.0))
+        assertEquals(60, hypeScore(heat, 45.0, 55.0))
+        assertEquals(-1, hypeScore(emptyList(), 0.0, 10.0))
+        val info = VideoInfo("abc", "V", 100.0, "Me", "u", heat, emptyList(), null)
+        val clips = suggestClips(info, 10.0, 4)
+        val best = clips.maxByOrNull { it.score }!!
+        assertEquals(50.0, best.start, 0.11)
+        assertTrue(best.selected)
+        assertEquals(3, clips.count { it.selected })
+    }
+
+    @Test
+    fun timeNeverShowsSixtySeconds() {
+        assertEquals("1:00", fmtTime(59.96))
+        assertEquals("0:59.9", fmtTime(59.94))
+    }
 }

@@ -25,6 +25,8 @@ data class ClipSpec(
     val reason: String,
     val title: String,
     val selected: Boolean = true,
+    /** 0–100: how much viewers replay this part (YouTube "Most replayed"). -1 when unknown. */
+    val score: Int = -1,
 )
 
 data class SearchHit(
@@ -133,9 +135,26 @@ fun suggestClips(info: VideoInfo, clipLen: Double = 45.0, count: Int = 8): List<
             out += Triple(s, e, "Evenly spaced")
         }
     }
-    return out.sortedBy { it.first }.mapIndexed { i, (s, e, r) ->
-        ClipSpec(s, e, r, "${info.title.take(70)} – Part ${i + 1}", selected = i < 3)
+    val scored = out.map { (s, e, r) -> Triple(s, e, r) to hypeScore(info.heatmap, s, e) }
+    // the 3 highest-scoring clips start selected
+    val top = scored.sortedByDescending { it.second }.take(3).map { it.first }.toSet()
+    return scored.sortedBy { it.first.first }.mapIndexed { i, (t, score) ->
+        ClipSpec(t.first, t.second, t.third, "${info.title.take(70)} – Part ${i + 1}", selected = t in top, score = score)
     }
+}
+
+/** Average replay intensity over [start, end], scaled 0–100 against the video's own peak. */
+fun hypeScore(heat: List<Heat>, start: Double, end: Double): Int {
+    if (heat.isEmpty() || end <= start) return -1
+    val peak = heat.maxOf { it.value }.takeIf { it > 0 } ?: return -1
+    var sum = 0.0
+    var covered = 0.0
+    for (h in heat) {
+        val o = min(end, h.end) - max(start, h.start)
+        if (o > 0) { sum += h.value * o; covered += o }
+    }
+    if (covered <= 0) return -1
+    return ((sum / covered) / peak * 100).toInt().coerceIn(0, 100)
 }
 
 private fun round1(x: Double) = Math.round(x * 10) / 10.0
@@ -194,7 +213,7 @@ fun groupWords(words: List<Word>, maxWords: Int = 3, maxGap: Double = 0.6, maxDu
 }
 
 fun fmtTime(sec: Double): String {
-    val s = max(0.0, sec)
+    val s = Math.round(max(0.0, sec) * 10) / 10.0 // avoids "0:60.0" for 59.96
     val h = (s / 3600).toInt()
     val m = ((s % 3600) / 60).toInt()
     val r = s % 60

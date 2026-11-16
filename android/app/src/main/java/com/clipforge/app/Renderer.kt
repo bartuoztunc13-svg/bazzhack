@@ -2,6 +2,13 @@ package com.clipforge.app
 
 import android.content.ContentValues
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Matrix
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Typeface
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Handler
@@ -12,11 +19,15 @@ import androidx.media3.common.Effect
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.effect.BitmapOverlay
+import androidx.media3.effect.MatrixTransformation
 import androidx.media3.effect.OverlayEffect
+import androidx.media3.effect.OverlaySettings
 import androidx.media3.effect.Presentation
 import androidx.media3.effect.TextureOverlay
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
+import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
@@ -31,6 +42,29 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.min
 
+enum class Layout(val label: String) {
+    VERTICAL("Vertical 9:16"),
+    SPLIT("Split screen + Block Runner"),
+    ORIGINAL("Original shape"),
+}
+
+/** One piece of video to cut out of the source, with its captions and optional rank badge. */
+data class Segment(
+    val startSec: Double,
+    val endSec: Double,
+    val lines: List<CapLine>,
+    val rank: Int? = null,
+    val label: String? = null,
+)
+
+data class Look(
+    val layout: Layout,
+    val style: CaptionStyle,
+    val uppercase: Boolean,
+    val highlight: Boolean,
+)
+
+@OptIn(UnstableApi::class)
 object Renderer {
 
     private fun videoSize(file: File): Pair<Int, Int> {
@@ -48,45 +82,90 @@ object Renderer {
 
     private fun even(x: Int) = x - x % 2
 
-    /** Cuts [startSec, endSec], crops/scales, burns captions. Runs the encoder on the main thread as Media3 requires. */
-    @OptIn(UnstableApi::class)
-    suspend fun render(
-        ctx: Context,
-        src: File,
-        out: File,
-        startSec: Double,
-        endSec: Double,
-        vertical: Boolean,
-        lines: List<CapLine>,
-        style: CaptionStyle,
-        uppercase: Boolean,
-        highlight: Boolean,
-        onProgress: (Int) -> Unit,
-    ) {
-        val (w, h) = withContext(Dispatchers.IO) { videoSize(src) }
-        val (ow, oh) = if (vertical) 1080 to 1920 else {
+    private fun outputSize(layout: Layout, w: Int, h: Int): Pair<Int, Int> = when (layout) {
+        Layout.VERTICAL, Layout.SPLIT -> 1080 to 1920
+        Layout.ORIGINAL -> {
             val oh = even(min(h, 1080))
             even(w * oh / h) to oh
         }
-        val effects = mutableListOf<Effect>(
-            Presentation.createForWidthAndHeight(ow, oh, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP)
-        )
-        if (lines.isNotEmpty()) {
-            effects += OverlayEffect(
-                ImmutableList.of<TextureOverlay>(CaptionOverlay(lines, ow, oh, style, uppercase, highlight))
-            )
+    }
+
+    private fun buildItem(src: File, seg: Segment, look: Look, ow: Int, oh: Int, runnerOffset: Double): EditedMediaItem {
+        val effects = mutableListOf<Effect>()
+        val overlays = mutableListOf<TextureOverlay>()
+        when (look.layout) {
+            Layout.SPLIT -> {
+                // video fills the top half; Block Runner fills the bottom half
+                effects += Presentation.createForWidthAndHeight(ow, oh / 2, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP)
+                effects += Presentation.createForWidthAndHeight(ow, oh, Presentation.LAYOUT_SCALE_TO_FIT)
+                effects += MatrixTransformation { Matrix().apply { postTranslate(0f, 0.5f) } }
+                overlays += ParkourOverlay(ow, oh / 2, runnerOffset)
+            }
+            else -> effects += Presentation.createForWidthAndHeight(ow, oh, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP)
         }
+        if (seg.lines.isNotEmpty()) {
+            val center = if (look.layout == Layout.SPLIT) 0.5f else null // split: captions on the seam
+            overlays += CaptionOverlay(seg.lines, ow, oh, look.style, look.uppercase, look.highlight, center)
+        }
+        if (seg.rank != null) overlays += rankBadge(seg.rank, seg.label, ow, oh)
+        if (overlays.isNotEmpty()) effects += OverlayEffect(ImmutableList.copyOf(overlays))
+
         val item = MediaItem.Builder()
             .setUri(Uri.fromFile(src))
             .setClippingConfiguration(
                 MediaItem.ClippingConfiguration.Builder()
-                    .setStartPositionMs((startSec * 1000).toLong())
-                    .setEndPositionMs((endSec * 1000).toLong())
+                    .setStartPositionMs((seg.startSec * 1000).toLong())
+                    .setEndPositionMs((seg.endSec * 1000).toLong())
                     .build()
             ).build()
-        val edited = EditedMediaItem.Builder(item)
-            .setEffects(Effects(emptyList(), effects))
+        return EditedMediaItem.Builder(item).setEffects(Effects(emptyList(), effects)).build()
+    }
+
+    /** Big "#3" badge (plus a short label) in the top-left corner. */
+    private fun rankBadge(rank: Int, label: String?, ow: Int, oh: Int): BitmapOverlay {
+        val size = min(ow, oh) * 0.2f
+        val pad = size * 0.18f
+        val num = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            textSize = size * 0.62f
+            color = Color.WHITE
+        }
+        val sub = Paint(num).apply { textSize = size * 0.2f }
+        val text = "#$rank"
+        val labelText = label?.take(40)?.trim().orEmpty()
+        val textW = maxOf(num.measureText(text), if (labelText.isEmpty()) 0f else sub.measureText(labelText))
+        val boxW = min(textW + pad * 2, ow * 0.9f)
+        val boxH = size * if (labelText.isEmpty()) 0.85f else 1.12f
+        val margin = pad * 1.2f // gap from the video's corner
+        val bmp = Bitmap.createBitmap((margin + boxW).toInt() + 1, (margin + boxH).toInt() + 1, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val box = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(255, 59, 59) }
+        c.drawRoundRect(RectF(margin, margin, margin + boxW, margin + boxH), pad, pad, box)
+        c.drawText(text, margin + pad, margin + size * 0.68f, num)
+        if (labelText.isNotEmpty()) {
+            sub.color = Color.argb(235, 255, 255, 255)
+            c.drawText(labelText, margin + pad, margin + size * 0.98f, sub)
+        }
+        val settings = OverlaySettings.Builder()
+            .setBackgroundFrameAnchor(-1f, 1f)
+            .setOverlayFrameAnchor(-1f, 1f)
             .build()
+        return BitmapOverlay.createStaticBitmapOverlay(bmp, settings)
+    }
+
+    /**
+     * Renders the segments one after another into a single file.
+     * One segment = a normal clip. Several = a ranking countdown.
+     */
+    suspend fun render(ctx: Context, src: File, out: File, segments: List<Segment>, look: Look, onProgress: (Int) -> Unit) {
+        require(segments.isNotEmpty())
+        val (w, h) = withContext(Dispatchers.IO) { videoSize(src) }
+        val (ow, oh) = outputSize(look.layout, w, h)
+        var offset = 0.0
+        val items = segments.map { s ->
+            buildItem(src, s, look, ow, oh, offset).also { offset += s.endSec - s.startSec }
+        }
+        val composition = Composition.Builder(EditedMediaItemSequence(items)).build()
         out.delete()
 
         withContext(Dispatchers.Main) {
@@ -113,7 +192,7 @@ object Renderer {
                     if (transformer.getProgress(holder) == Transformer.PROGRESS_STATE_AVAILABLE) onProgress(holder.progress)
                     handler.postDelayed(poll, 400)
                 }
-                transformer.start(edited, out.absolutePath)
+                transformer.start(composition, out.absolutePath)
                 handler.post(poll)
                 cont.invokeOnCancellation {
                     handler.post {
@@ -125,7 +204,7 @@ object Renderer {
         }
     }
 
-    /** Copies the finished clip into Movies/ClipForge so it shows in the gallery and the YouTube app. */
+    /** Copies the finished video into Movies/ClipForge so it shows in the gallery and the YouTube app. */
     fun saveToGallery(ctx: Context, file: File, name: String): Uri {
         val safe = name.replace(Regex("[^\\p{L}\\p{N} _.-]"), "").trim().take(80).ifBlank { "clip" }
         val values = ContentValues().apply {
@@ -137,10 +216,15 @@ object Renderer {
         val resolver = ctx.contentResolver
         val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
             ?: error("Couldn't save to the gallery")
-        resolver.openOutputStream(uri)!!.use { o -> file.inputStream().use { it.copyTo(o) } }
-        values.clear()
-        values.put(MediaStore.Video.Media.IS_PENDING, 0)
-        resolver.update(uri, values, null, null)
+        try {
+            resolver.openOutputStream(uri)!!.use { o -> file.inputStream().use { it.copyTo(o) } }
+            values.clear()
+            values.put(MediaStore.Video.Media.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+        } catch (t: Throwable) {
+            resolver.delete(uri, null, null) // don't leave a broken, hidden file behind
+            throw t
+        }
         return uri
     }
 }

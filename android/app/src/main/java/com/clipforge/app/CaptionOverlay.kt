@@ -28,11 +28,13 @@ class CaptionOverlay(
     private val style: CaptionStyle,
     private val uppercase: Boolean,
     private val highlight: Boolean,
+    /** Vertical position of the caption centre (0 = top, 1 = bottom). Null = automatic. */
+    centerFrac: Float? = null,
 ) : BitmapOverlay() {
 
     private val vertical = frameH > frameW
     // Full-frame transparent layer: default overlay placement then lines up 1:1 with the video.
-    private val centerY = frameH * if (vertical) 0.72f else 0.88f
+    private val centerY = frameH * (centerFrac ?: if (vertical) 0.72f else 0.88f)
     private val empty: Bitmap = Bitmap.createBitmap(frameW, frameH, Bitmap.Config.ARGB_8888)
     private var baseUs = -1L
     private var lastKey = -1L

@@ -16,9 +16,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
@@ -129,6 +132,7 @@ private fun PasteLink(vm: AppViewModel) {
             vm.url, { vm.url = it }, Modifier.fillMaxWidth(), singleLine = true,
             placeholder = { Text("https://youtube.com/watch?v=…") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
+            keyboardActions = KeyboardActions(onGo = { vm.loadVideo() }),
         )
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedTextField(vm.clipLen, { vm.clipLen = it.filter(Char::isDigit).take(3) }, Modifier.weight(1f),
@@ -174,7 +178,8 @@ private fun TownSearch(vm: AppViewModel) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(vm.town, { vm.town = it }, Modifier.weight(1f), singleLine = true,
                     placeholder = { Text("Town or city") },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search))
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { vm.searchTown() }))
                 Spacer(Modifier.width(8.dp))
                 FilledTonalIconButton({ perm.launch(Manifest.permission.ACCESS_COARSE_LOCATION) }) {
                     Icon(Icons.Default.LocationOn, "Use my location")
@@ -193,11 +198,21 @@ private fun TownSearch(vm: AppViewModel) {
                 Icon(Icons.Default.Search, null); Spacer(Modifier.width(8.dp)); Text("Show popular videos")
             }
         }
+        if (vm.hits.isNotEmpty()) item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Rank by", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(8.dp))
+                TownSort.entries.forEach { o ->
+                    FilterChip(vm.townSort == o, { vm.townSort = o; vm.applyTownSort() }, label = { Text(o.label) },
+                        modifier = Modifier.padding(end = 8.dp))
+                }
+            }
+        }
         if (vm.searched && vm.hits.isEmpty()) item {
             Text("Nothing found for that time range. Try “This month” or a bigger nearby city.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        itemsIndexed(vm.hits) { _, h -> HitCard(h) { vm.loadVideo(h.url) } }
+        itemsIndexed(vm.hits) { i, h -> HitCard(i + 1, h) { vm.loadVideo(h.url) } }
         if (vm.hits.isNotEmpty()) item {
             Text("Only repost clips you have rights to — reposting other people's videos can get your channel a copyright strike.",
                 fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -206,13 +221,16 @@ private fun TownSearch(vm: AppViewModel) {
 }
 
 @Composable
-private fun HitCard(h: SearchHit, onClick: () -> Unit) {
+private fun HitCard(place: Int, h: SearchHit, onClick: () -> Unit) {
     Card(Modifier.fillMaxWidth().clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Row(Modifier.padding(10.dp)) {
             Box {
                 AsyncImage(h.thumb, null, Modifier.width(140.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)),
                     contentScale = ContentScale.Crop)
+                Surface(color = Red, shape = RoundedCornerShape(4.dp), modifier = Modifier.align(Alignment.TopStart).padding(4.dp)) {
+                    Text("#$place", fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 4.dp))
+                }
                 if (h.duration > 0) Surface(color = Color(0xCC000000), shape = RoundedCornerShape(4.dp),
                     modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp)) {
                     Text(fmtTime(h.duration), fontSize = 11.sp, modifier = Modifier.padding(horizontal = 4.dp))
@@ -252,23 +270,38 @@ private fun Clips(vm: AppViewModel) {
             }
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Pick clips", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                    TextButton({ vm.addCustomClip() }) { Text("+ Custom clip") }
+                    Text("Pick & rank clips", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    TextButton({ vm.addCustomClip() }) { Text("+ Custom") }
+                }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AssistChip({ vm.sortBest() }, label = { Text("🔥 Best first") })
+                    AssistChip({ vm.sortTimeline() }, label = { Text("In video order") })
+                }
+                Text("Top of the list = #1. Use the arrows to change the ranking.", fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            itemsIndexed(vm.clips) { i, c ->
+                ClipCard(c, vm.rankOf(i), { vm.updateClip(i, it) }, { vm.moveClip(i, -1) }, { vm.moveClip(i, 1) }) {
+                    Share.watchAt(ctx, v.id, c.startSec ?: 0.0)
                 }
             }
-            itemsIndexed(vm.clips) { i, c -> ClipCard(c, { vm.updateClip(i, it) }) { Share.watchAt(ctx, v.id, c.startSec ?: 0.0) } }
             item { Options(vm) }
         }
         Surface(color = MaterialTheme.colorScheme.surface) {
             Button({ vm.makeClips() }, Modifier.fillMaxWidth().padding(16.dp).height(52.dp), enabled = n > 0) {
-                Text(if (n == 1) "Make 1 clip" else "Make $n clips", fontSize = 16.sp)
+                val label = when {
+                    vm.mode == OutputMode.RANKING -> "Make Top $n video"
+                    n == 1 -> "Make 1 clip"
+                    else -> "Make $n clips"
+                }
+                Text(label, fontSize = 16.sp)
             }
         }
     }
 }
 
 @Composable
-private fun ClipCard(c: ClipRow, onChange: (ClipRow) -> Unit, onWatch: () -> Unit) {
+private fun ClipCard(c: ClipRow, rank: Int?, onChange: (ClipRow) -> Unit, onUp: () -> Unit, onDown: () -> Unit, onWatch: () -> Unit) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         border = if (c.selected) BorderStroke(2.dp, Red) else null,
@@ -276,7 +309,17 @@ private fun ClipCard(c: ClipRow, onChange: (ClipRow) -> Unit, onWatch: () -> Uni
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(c.selected, { onChange(c.copy(selected = it)) })
-                Text(c.reason, fontSize = 13.sp, modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (rank != null) Surface(color = Red, shape = RoundedCornerShape(6.dp)) {
+                    Text("#$rank", fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                }
+                Spacer(Modifier.width(6.dp))
+                Column(Modifier.weight(1f)) {
+                    if (c.score >= 0) Text("🔥 Hype ${c.score}/100", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text(c.reason, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis)
+                }
+                IconButton(onUp, Modifier.size(36.dp)) { Icon(Icons.Default.KeyboardArrowUp, "Move up") }
+                IconButton(onDown, Modifier.size(36.dp)) { Icon(Icons.Default.KeyboardArrowDown, "Move down") }
                 TextButton(onWatch) { Text("Watch") }
             }
             OutlinedTextField(c.title, { onChange(c.copy(title = it)) }, Modifier.fillMaxWidth(), singleLine = true, label = { Text("Title") })
@@ -298,8 +341,20 @@ private fun Options(vm: AppViewModel) {
         Spacer(Modifier.height(8.dp))
         Text("Format", style = MaterialTheme.typography.titleMedium)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(vm.vertical, { vm.vertical = true }, label = { Text("Vertical 9:16 (Shorts)") })
-            FilterChip(!vm.vertical, { vm.vertical = false }, label = { Text("Original shape") })
+            Layout.entries.forEach { l -> FilterChip(vm.layout == l, { vm.layout = l }, label = { Text(l.label) }) }
+        }
+        if (vm.layout == Layout.SPLIT) Text(
+            "Clip on top, Block Runner parkour below — keeps viewers watching. Captions sit on the middle line.",
+            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Output", style = MaterialTheme.typography.titleMedium)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutputMode.entries.forEach { m -> FilterChip(vm.mode == m, { vm.mode = m }, label = { Text(m.label) }) }
+        }
+        if (vm.mode == OutputMode.RANKING) {
+            OutlinedTextField(vm.rankingTitle, { vm.rankingTitle = it.take(100) }, Modifier.fillMaxWidth(),
+                singleLine = true, label = { Text("Ranking video title") })
+            Text("One video counting down from #${maxOf(2, vm.clips.count { it.selected })} to #1, with a rank badge on each part.",
+                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Captions", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
