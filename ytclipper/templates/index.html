@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ClipForge</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo">▶</span> ClipForge</div>
+  <div id="yt-account" class="account"></div>
+</header>
+
+<main>
+  <!-- STEP 1 -->
+  <section class="card" id="step-url">
+    <h1>Turn a YouTube video into captioned clips</h1>
+    <p class="muted">Paste a link. We'll suggest the best moments using YouTube's “Most replayed” data and chapters.</p>
+    <form id="url-form" class="url-row">
+      <input id="url" type="url" placeholder="https://www.youtube.com/watch?v=…" required>
+      <button class="btn primary" type="submit">Find clips</button>
+    </form>
+    <div class="row small">
+      <label>Clip length <input id="clip-len" type="number" min="5" max="180" value="45"> sec</label>
+      <label>How many <input id="count" type="number" min="1" max="20" value="8"></label>
+    </div>
+    <div id="url-status" class="status"></div>
+  </section>
+
+  <!-- STEP 2 -->
+  <section class="card hidden" id="step-pick">
+    <div class="pick-head">
+      <div>
+        <h2 id="video-title"></h2>
+        <p class="muted" id="video-meta"></p>
+      </div>
+      <div class="row">
+        <button class="btn" id="select-all">Select all</button>
+        <button class="btn" id="add-clip">+ Custom clip</button>
+      </div>
+    </div>
+    <div id="clips" class="clip-grid"></div>
+
+    <h3>Captions &amp; format</h3>
+    <div class="options">
+      <label>Format
+        <select id="opt-format">
+          <option value="vertical">Vertical 9:16 (Shorts)</option>
+          <option value="original">Original shape</option>
+        </select>
+      </label>
+      <label>Caption style
+        <select id="opt-style">
+          <option value="bold">Bold white</option>
+          <option value="yellow">Yellow</option>
+          <option value="boxed">Boxed</option>
+          <option value="minimal">Minimal</option>
+          <option value="none">No captions</option>
+        </select>
+      </label>
+      <label>Accuracy
+        <select id="opt-model">
+          <option value="tiny">Fast</option>
+          <option value="base" selected>Balanced</option>
+          <option value="small">Accurate (slower)</option>
+        </select>
+      </label>
+      <label>Language
+        <select id="opt-lang">
+          <option value="">Auto-detect</option>
+          <option value="en">English</option><option value="es">Spanish</option>
+          <option value="tr">Turkish</option><option value="de">German</option>
+          <option value="fr">French</option><option value="pt">Portuguese</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" id="opt-upper" checked> ALL CAPS</label>
+      <label class="check"><input type="checkbox" id="opt-hl" checked> Highlight spoken word</label>
+    </div>
+    <div class="row end">
+      <span id="sel-count" class="muted"></span>
+      <button class="btn primary" id="render-btn">Make clips</button>
+    </div>
+  </section>
+
+  <!-- STEP 3 -->
+  <section class="card hidden" id="step-results">
+    <h2>Your clips</h2>
+    <p class="muted" id="results-note"></p>
+    <div id="results" class="result-list"></div>
+  </section>
+</main>
+
+<template id="clip-tpl">
+  <div class="clip">
+    <div class="frame"></div>
+    <div class="clip-body">
+      <label class="check pick"><input type="checkbox" class="sel" checked> <span class="reason"></span></label>
+      <input class="title" type="text">
+      <div class="times">
+        <label>Start <input class="start" type="text"></label>
+        <label>End <input class="end" type="text"></label>
+        <span class="dur muted"></span>
+      </div>
+      <button class="btn tiny preview">Preview</button>
+    </div>
+  </div>
+</template>
+
+<template id="result-tpl">
+  <div class="result">
+    <div class="video-wrap"><div class="placeholder">Waiting…</div></div>
+    <div class="result-body">
+      <div class="result-title"></div>
+      <div class="progress muted"></div>
+      <div class="actions hidden">
+        <a class="btn download">Download video</a>
+        <a class="btn srt">Captions (.srt)</a>
+      </div>
+      <form class="publish hidden">
+        <input name="title" type="text" placeholder="Title" maxlength="100">
+        <textarea name="description" rows="3" placeholder="Description"></textarea>
+        <input name="tags" type="text" placeholder="tags, comma, separated">
+        <div class="row">
+          <select name="privacy">
+            <option value="private">Private</option>
+            <option value="unlisted">Unlisted</option>
+            <option value="public">Public</option>
+          </select>
+          <button class="btn primary post" type="submit">Post to YouTube</button>
+          <span class="upload-status muted"></span>
+        </div>
+      </form>
+      <div class="manual hidden muted small">
+        To post: download the video, then open
+        <a href="https://studio.youtube.com" target="_blank" rel="noopener">YouTube Studio</a> → Create → Upload videos.
+        <button class="btn tiny copy" type="button">Copy title + description</button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
